@@ -1,0 +1,47 @@
+// ========================================
+// ArgoCD Application Manifest
+// Save as: argocd/application.yaml
+// ========================================
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: microservices-ecommerce
+  namespace: argocd
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/Harshacric945/Microservice.git
+    targetRevision: main
+    path: k8s-manifests  # Directory containing all YAML files
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  
+  syncPolicy:
+    automated:
+      prune: true      # Delete resources if removed from Git
+      selfHeal: true   # Auto-sync if cluster state drifts
+      allowEmpty: false
+    
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Health check configuration
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas  # Ignore HPA-managed replicas
