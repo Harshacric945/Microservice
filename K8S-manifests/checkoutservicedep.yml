@@ -2,14 +2,6 @@
 # 2. CHECKOUTSERVICE - Modified for Vault + PostgreSQL
 # ========================================
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: checkoutservice-sa
-  namespace: default
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/checkoutservice-irsa-role
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

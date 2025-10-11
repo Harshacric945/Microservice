@@ -2,14 +2,6 @@
 # 4. PAYMENTSERVICE - Modified for Vault + PostgreSQL
 # ========================================
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: paymentservice-sa
-  namespace: default
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/paymentservice-irsa-role
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -2,14 +2,6 @@
 # 1. CARTSERVICE - Modified for Vault + PostgreSQL
 # ========================================
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: cartservice-sa
-  namespace: default
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/cartservice-irsa-role
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
