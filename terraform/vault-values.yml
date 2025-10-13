@@ -1,0 +1,73 @@
+# ========================================
+# FILE 5: terraform/vault-values.yaml
+# ========================================
+
+server:
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+        
+        listener "tcp" {
+          tls_disable = 1
+          address = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+        
+        storage "raft" {
+          path = "/vault/data"
+        }
+        
+        seal "awskms" {
+          region     = "${aws_region}"
+          kms_key_id = "${kms_key_id}"
+        }
+        
+        service_registration "kubernetes" {}
+
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    storageClass: gp2
+    accessMode: ReadWriteOnce
+
+  service:
+    enabled: true
+    type: LoadBalancer
+    port: 8200
+    targetPort: 8200
+
+  serviceAccount:
+    create: false
+    name: "${service_account_name}"
+
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+injector:
+  enabled: true
+  replicas: 2
+  
+  metrics:
+    enabled: true
+  
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+ui:
+  enabled: true
+  serviceType: LoadBalancer
