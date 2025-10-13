@@ -203,8 +203,8 @@ resource "aws_db_instance" "postgresql" {
   engine                  = "postgres"
   engine_version          = "15.4"
   instance_class          = "db.t3.medium"
-  allocated_storage       = 50
-  max_allocated_storage   = 100
+  allocated_storage       = 20
+  max_allocated_storage   = 50
   storage_type            = "gp3"
   storage_encrypted       = true
   db_name                 = "microservices"
@@ -213,7 +213,7 @@ resource "aws_db_instance" "postgresql" {
   db_subnet_group_name    = aws_db_subnet_group.rds.name
   vpc_security_group_ids  = [aws_security_group.rds.id]
   publicly_accessible     = false
-  backup_retention_period = 7
+  backup_retention_period = 1
   skip_final_snapshot     = true
   deletion_protection     = false
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
