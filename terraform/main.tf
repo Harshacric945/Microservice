@@ -76,6 +76,7 @@ module "eks" {
   cluster_version = var.cluster_version
 
   enable_irsa = true
+  enable_cluster_creator_admin_permissions = true
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
@@ -201,7 +202,7 @@ resource "random_password" "rds_password" {
 resource "aws_db_instance" "postgresql" {
   identifier              = "${var.cluster_name}-postgresql"
   engine                  = "postgres"
-  engine_version          = "15.4"
+  engine_version          = "15.14"
   instance_class          = "db.t3.micro" 
   allocated_storage       = 20
   max_allocated_storage   = 50
