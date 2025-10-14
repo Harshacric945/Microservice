@@ -15,7 +15,7 @@ spec:
   source:
     repoURL: https://github.com/Harshacric945/Microservice.git
     targetRevision: main
-    path: k8s-manifests  # Directory containing all YAML files
+    path: K8S-manifests  # Directory containing all YAML files
   
   destination:
     server: https://kubernetes.default.svc
