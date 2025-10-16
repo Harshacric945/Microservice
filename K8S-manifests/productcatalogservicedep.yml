@@ -1,12 +1,16 @@
-# ========================================
-# 3. PRODUCTCATALOGSERVICE - Modified for Vault + PostgreSQL
-# ========================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: productcatalogservice-sa
+  namespace: default
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: productcatalogservice
+  namespace: default
 spec:
+  replicas: 2
   selector:
     matchLabels:
       app: productcatalogservice
@@ -20,7 +24,7 @@ spec:
         vault.hashicorp.com/agent-inject-secret-db-creds: "database/creds/productcatalogservice-role"
         vault.hashicorp.com/agent-inject-template-db-creds: |
           {{- with secret "database/creds/productcatalogservice-role" -}}
-          export DB_HOST="YOUR_RDS_ENDPOINT.rds.amazonaws.com"
+          export DB_HOST="REPLACE_WITH_YOUR_RDS_ENDPOINT"
           export DB_PORT="5432"
           export DB_NAME="product_db"
           export DB_USER="{{ .Data.username }}"
@@ -28,7 +32,6 @@ spec:
           {{- end -}}
     spec:
       serviceAccountName: productcatalogservice-sa
-      terminationGracePeriodSeconds: 5
       containers:
       - name: server
         image: harshakoppu945/productcatalogservice:latest
@@ -36,30 +39,34 @@ spec:
         - containerPort: 3550
         command: ["/bin/sh", "-c"]
         args:
-          - source /vault/secrets/db-creds && /app/productcatalogservice
+          - |
+            for i in $(seq 1 15); do
+              [ -s /vault/secrets/db-creds ] && break || sleep 1
+            done
+            source /vault/secrets/db-creds
+            exec /app/productcatalogservice
         env:
         - name: PORT
           value: "3550"
-        - name: DISABLE_PROFILER
-          value: "1"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 300m
+            memory: 256Mi
         readinessProbe:
           exec:
             command: ["/bin/grpc_health_probe", "-addr=:3550"]
         livenessProbe:
           exec:
             command: ["/bin/grpc_health_probe", "-addr=:3550"]
-        resources:
-          requests:
-            cpu: 100m
-            memory: 64Mi
-          limits:
-            cpu: 200m
-            memory: 128Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: productcatalogservice
+  namespace: default
 spec:
   type: ClusterIP
   selector:
