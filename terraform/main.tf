@@ -1,5 +1,5 @@
 # ========================================
-# FILE: main.tf (Fixed - Cycle Free)
+# FILE: main.tf (FULLY CORRECTED)
 # ========================================
 
 terraform {
@@ -87,15 +87,15 @@ module "eks" {
   eks_managed_node_groups = {
     general = {
       name           = "${var.cluster_name}-node-group"
-      instance_types = ["t3.medium"]
+      instance_types = ["t3.large"]
 
       min_size     = 2
       max_size     = 5
       desired_size = 3
       disk_size    = 20
 
-       iam_role_name            = "eks-ng-general-role"
-    iam_role_use_name_prefix = false
+      iam_role_name            = "eks-ng-general-role"
+      iam_role_use_name_prefix = false
     }
   }
 
@@ -111,6 +111,42 @@ module "eks" {
   }
 
   tags = var.tags
+}
+
+# ========================================
+# EBS CSI Driver IRSA
+# ========================================
+module "ebs_csi_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
+
+  role_name = "${var.cluster_name}-ebs-csi-driver"
+
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+
+  tags = var.tags
+}
+
+# ========================================
+# EBS CSI Driver Addon
+# ========================================
+resource "aws_eks_addon" "ebs_csi_driver" {
+  cluster_name             = module.eks.cluster_name
+  addon_name               = "aws-ebs-csi-driver"
+  addon_version            = "v1.35.0-eksbuild.1"
+  service_account_role_arn = module.ebs_csi_irsa.iam_role_arn
+
+  depends_on = [
+    module.eks,
+    module.ebs_csi_irsa
+  ]
 }
 
 # ========================================
@@ -146,7 +182,7 @@ provider "helm" {
 }
 
 # ========================================
-# KMS Key for Vault Auto-Unseal
+# KMS Key for Vault Auto-Unseal (CORRECTED)
 # ========================================
 resource "aws_kms_key" "vault_unseal" {
   description             = "KMS key for Vault auto-unseal"
@@ -203,7 +239,7 @@ resource "aws_db_instance" "postgresql" {
   identifier              = "${var.cluster_name}-postgresql"
   engine                  = "postgres"
   engine_version          = "15.14"
-  instance_class          = "db.t3.micro" 
+  instance_class          = "db.t3.medium"
   allocated_storage       = 20
   max_allocated_storage   = 50
   storage_type            = "gp3"
@@ -223,7 +259,7 @@ resource "aws_db_instance" "postgresql" {
 }
 
 # ========================================
-# IRSA for Vault (KMS Access)
+# IRSA for Vault (KMS Access) - CORRECTED POLICY
 # ========================================
 module "vault_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
@@ -245,6 +281,7 @@ module "vault_irsa" {
   tags = var.tags
 }
 
+# FULLY CORRECTED KMS Policy
 resource "aws_iam_policy" "vault_kms_unseal" {
   name        = "${var.cluster_name}-vault-kms-unseal-policy"
   description = "Policy for Vault to use KMS for auto-unseal"
@@ -257,7 +294,8 @@ resource "aws_iam_policy" "vault_kms_unseal" {
         Action = [
           "kms:Decrypt",
           "kms:Encrypt",
-          "kms:DescribeKey"
+          "kms:DescribeKey",
+          "kms:GenerateDataKey"
         ]
         Resource = aws_kms_key.vault_unseal.arn
       }
@@ -300,9 +338,9 @@ resource "helm_release" "vault" {
   namespace  = kubernetes_namespace.vault.metadata[0].name
 
   values = [templatefile("${path.module}/vault-values.yaml", {
-    kms_key_id           = aws_kms_key.vault_unseal.id
+    kms_key_id           = aws_kms_key.vault_unseal.arn
     aws_region           = var.aws_region
-    service_account_name = "vault"
+    service_account_name = kubernetes_service_account.vault.metadata[0].name
   })]
 
   depends_on = [
@@ -311,4 +349,3 @@ resource "helm_release" "vault" {
     kubernetes_service_account.vault
   ]
 }
-
