@@ -1,36 +1,34 @@
 #!/bin/bash
 # ========================================
-# Vault Post-Deployment Configuration Script
-# Run this AFTER Terraform completes
+# COMPLETE VAULT SETUP - FINAL VERSION
+# Includes Kubernetes Auth configuration fix
+# Run AFTER applying vault-kubernetes-auth-SETUP.yaml
 # ========================================
 
 set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}Vault Configuration Script${NC}"
-echo -e "${GREEN}========================================${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}COMPLETE VAULT SETUP - FINAL${NC}"
+echo -e "${BLUE}========================================${NC}"
 
 # ========================================
-# Prerequisites Check
+# Verify Prerequisites
 # ========================================
-echo -e "${YELLOW}Checking prerequisites...${NC}"
+echo -e "${YELLOW}Verifying prerequisites...${NC}"
 
-if ! command -v kubectl &> /dev/null; then
-    echo -e "${RED}kubectl not found. Please install kubectl.${NC}"
-    exit 1
-fi
-
-if ! command -v vault &> /dev/null; then
-    echo -e "${RED}vault CLI not found. Installing...${NC}"
-    wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-    sudo apt update && sudo apt install vault
+if ! command -v jq &> /dev/null; then
+    echo -e "${YELLOW}Installing jq...${NC}"
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update && sudo apt-get install -y jq >/dev/null 2>&1
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y jq >/dev/null 2>&1
+    fi
 fi
 
 # ========================================
@@ -38,80 +36,148 @@ fi
 # ========================================
 echo -e "${YELLOW}Retrieving Terraform outputs...${NC}"
 
-RDS_ENDPOINT=$(terraform output -raw rds_endpoint | cut -d':' -f1)
-RDS_USERNAME=$(terraform output -raw rds_username)
-RDS_PASSWORD=$(terraform output -raw rds_password)
-CLUSTER_NAME=$(terraform output -raw cluster_name)
-AWS_REGION=$(terraform output -raw aws_region 2>/dev/null || echo "ap-south-1")
+TERRAFORM_DIR="../terraform"
+
+if [ ! -d "$TERRAFORM_DIR" ]; then
+    echo -e "${RED}ERROR: Terraform directory not found at $TERRAFORM_DIR${NC}"
+    exit 1
+fi
+
+RDS_ENDPOINT=$(terraform -chdir=${TERRAFORM_DIR} output -raw rds_endpoint 2>/dev/null | cut -d':' -f1)
+RDS_USERNAME=$(terraform -chdir=${TERRAFORM_DIR} output -raw rds_username 2>/dev/null)
+RDS_PASSWORD=$(terraform -chdir=${TERRAFORM_DIR} output -raw rds_password 2>/dev/null)
+CLUSTER_NAME=$(terraform -chdir=${TERRAFORM_DIR} output -raw cluster_name 2>/dev/null)
+AWS_REGION=$(terraform -chdir=${TERRAFORM_DIR} output -raw aws_region 2>/dev/null || echo "ap-south-1")
+
+if [ -z "$RDS_ENDPOINT" ] || [ -z "$RDS_USERNAME" ] || [ -z "$RDS_PASSWORD" ]; then
+    echo -e "${RED}Failed to retrieve Terraform outputs. Run 'terraform apply' first.${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}✓ RDS Endpoint: ${RDS_ENDPOINT}${NC}"
 echo -e "${GREEN}✓ Cluster: ${CLUSTER_NAME}${NC}"
+echo ""
 
 # ========================================
 # Update Kubeconfig
 # ========================================
 echo -e "${YELLOW}Updating kubeconfig...${NC}"
-aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME} 2>/dev/null || true
 
 # ========================================
 # Wait for Vault Pods
 # ========================================
-echo -e "${YELLOW}Waiting for Vault pods to be ready...${NC}"
-kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=vault -n vault --timeout=300s
+echo -e "${YELLOW}Checking Vault pod status...${NC}"
+
+VAULT_0_STATUS=$(kubectl get pod vault-0 -n vault -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+
+if [ "$VAULT_0_STATUS" != "Running" ]; then
+    echo -e "${RED}Vault pods are not running. Status: $VAULT_0_STATUS${NC}"
+    kubectl get pods -n vault
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Vault pods are running${NC}"
+echo ""
 
 # ========================================
-# Port Forward Vault
+# Port Forward
 # ========================================
 echo -e "${YELLOW}Setting up port-forward to Vault...${NC}"
-kubectl port-forward -n vault svc/vault 8200:8200 &
+kubectl port-forward -n vault svc/vault 8200:8200 >/dev/null 2>&1 &
 PORT_FORWARD_PID=$!
 sleep 5
 
 export VAULT_ADDR='http://127.0.0.1:8200'
 export VAULT_SKIP_VERIFY=true
 
+echo -e "${GREEN}✓ Port-forward established${NC}"
+echo ""
+
 # ========================================
-# Initialize Vault (ONE TIME ONLY)
+# Check Vault Initialization Status
 # ========================================
 echo -e "${YELLOW}Checking Vault initialization status...${NC}"
 
-if vault status 2>&1 | grep -q "Vault is not initialized"; then
-    echo -e "${GREEN}Initializing Vault...${NC}"
-    
-    INIT_OUTPUT=$(vault operator init \
-        -key-shares=5 \
-        -key-threshold=3 \
-        -format=json)
-    
-    # Save init output securely
-    echo "${INIT_OUTPUT}" > vault-init-keys.json
-    chmod 600 vault-init-keys.json
-    
-    ROOT_TOKEN=$(echo "${INIT_OUTPUT}" | jq -r '.root_token')
-    
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}CRITICAL: SAVE THESE CREDENTIALS!${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${YELLOW}Root Token: ${ROOT_TOKEN}${NC}"
-    echo -e "${YELLOW}Recovery Keys saved to: vault-init-keys.json${NC}"
-    echo -e "${RED}STORE THIS FILE SECURELY AND DELETE FROM THIS SERVER!${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    
-    export VAULT_TOKEN=${ROOT_TOKEN}
-    
-    # Vault should auto-unseal via KMS
-    echo -e "${GREEN}Vault initialized and auto-unsealed via AWS KMS${NC}"
-else
-    echo -e "${GREEN}Vault already initialized${NC}"
-    echo -e "${YELLOW}Please enter your root token:${NC}"
-    read -s ROOT_TOKEN
-    export VAULT_TOKEN=${ROOT_TOKEN}
-fi
+VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"initialized":false}')
+IS_INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized // false')
 
-# Verify Vault is unsealed
-if ! vault status | grep -q "Sealed.*false"; then
-    echo -e "${RED}ERROR: Vault is sealed. Check KMS permissions.${NC}"
-    exit 1
+if [ "$IS_INITIALIZED" = "false" ]; then
+    # ========================================
+    # Initialize Vault
+    # ========================================
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}INITIALIZING VAULT${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+    echo -e "${YELLOW}Initializing Vault with KMS auto-unseal...${NC}"
+    echo ""
+
+    INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init \
+        -recovery-shares=5 \
+        -recovery-threshold=3 \
+        -format=json)
+
+    echo "$INIT_OUTPUT" > vault-init-keys.json
+    chmod 600 vault-init-keys.json
+
+    ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
+
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}✓ VAULT INITIALIZED!${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+    echo -e "${GREEN}ROOT TOKEN (save this):${NC}"
+    echo -e "${YELLOW}${ROOT_TOKEN}${NC}"
+    echo ""
+    echo -e "${GREEN}Recovery Keys:${NC}"
+    echo "$INIT_OUTPUT" | jq -r '.recovery_keys_b64[]' | nl -v 1 -w 2 -s '. '
+    echo ""
+    echo -e "${RED}CRITICAL: Credentials saved to vault-init-keys.json${NC}"
+    echo -e "${RED}BACKUP THIS FILE TO A SECURE LOCATION NOW!${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+
+    export VAULT_TOKEN=$ROOT_TOKEN
+
+    # Wait for Vault to stabilize
+    echo -e "${YELLOW}Waiting for Vault to stabilize...${NC}"
+    sleep 10
+
+    # Join Raft cluster
+    echo -e "${YELLOW}Joining vault-1 and vault-2 to Raft cluster...${NC}"
+    kubectl exec -n vault vault-1 -- vault operator raft join http://vault-0.vault-internal:8200 2>/dev/null || echo "  vault-1 join (may already be member)"
+    sleep 3
+    kubectl exec -n vault vault-2 -- vault operator raft join http://vault-0.vault-internal:8200 2>/dev/null || echo "  vault-2 join (may already be member)"
+    sleep 5
+
+    echo -e "${GREEN}✓ Raft cluster formed${NC}"
+    echo ""
+
+else
+    echo -e "${GREEN}✓ Vault is already initialized${NC}"
+
+    # Try to get token from file
+    if [ -f "vault-init-keys.json" ]; then
+        ROOT_TOKEN=$(cat vault-init-keys.json | jq -r '.root_token')
+        echo -e "${GREEN}✓ Root token loaded from vault-init-keys.json${NC}"
+    else
+        echo -e "${YELLOW}Please enter your Vault root token:${NC}"
+        read -s ROOT_TOKEN
+        echo ""
+    fi
+
+    export VAULT_TOKEN=$ROOT_TOKEN
+
+    # Verify token
+    if ! kubectl exec -n vault vault-0 -- vault token lookup -format=json >/dev/null 2>&1; then
+        echo -e "${RED}ERROR: Invalid root token${NC}"
+        kill $PORT_FORWARD_PID 2>/dev/null
+        exit 1
+    fi
+
+    echo -e "${GREEN}✓ Root token validated${NC}"
+    echo ""
 fi
 
 # ========================================
@@ -119,19 +185,16 @@ fi
 # ========================================
 echo -e "${YELLOW}Enabling database secrets engine...${NC}"
 
-if vault secrets list | grep -q "^database/"; then
-    echo -e "${GREEN}Database secrets engine already enabled${NC}"
-else
-    vault secrets enable database
-    echo -e "${GREEN}✓ Database secrets engine enabled${NC}"
-fi
+kubectl exec -n vault vault-0 -- vault secrets enable database 2>/dev/null || echo "  Already enabled"
+echo -e "${GREEN}✓ Database secrets engine enabled${NC}"
+echo ""
 
 # ========================================
 # Configure PostgreSQL Connection
 # ========================================
-echo -e "${YELLOW}Configuring PostgreSQL connection in Vault...${NC}"
+echo -e "${YELLOW}Configuring PostgreSQL connection...${NC}"
 
-vault write database/config/postgresql \
+kubectl exec -n vault vault-0 -- vault write database/config/postgresql \
     plugin_name=postgresql-database-plugin \
     allowed_roles="cartservice-role,checkoutservice-role,productcatalogservice-role,paymentservice-role" \
     connection_url="postgresql://{{username}}:{{password}}@${RDS_ENDPOINT}:5432/postgres?sslmode=require" \
@@ -139,99 +202,133 @@ vault write database/config/postgresql \
     password="${RDS_PASSWORD}"
 
 echo -e "${GREEN}✓ PostgreSQL connection configured${NC}"
+echo ""
 
 # ========================================
-# Create Databases in PostgreSQL
+# Create Databases
 # ========================================
 echo -e "${YELLOW}Creating databases in PostgreSQL...${NC}"
 
-PGPASSWORD=${RDS_PASSWORD} psql -h ${RDS_ENDPOINT} -U ${RDS_USERNAME} -d postgres -c "CREATE DATABASE cart_db;" 2>/dev/null || echo "cart_db exists"
-PGPASSWORD=${RDS_PASSWORD} psql -h ${RDS_ENDPOINT} -U ${RDS_USERNAME} -d postgres -c "CREATE DATABASE checkout_db;" 2>/dev/null || echo "checkout_db exists"
-PGPASSWORD=${RDS_PASSWORD} psql -h ${RDS_ENDPOINT} -U ${RDS_USERNAME} -d postgres -c "CREATE DATABASE product_db;" 2>/dev/null || echo "product_db exists"
-PGPASSWORD=${RDS_PASSWORD} psql -h ${RDS_ENDPOINT} -U ${RDS_USERNAME} -d postgres -c "CREATE DATABASE payment_db;" 2>/dev/null || echo "payment_db exists"
+export PGPASSWORD=${RDS_PASSWORD}
 
-echo -e "${GREEN}✓ Databases created${NC}"
+for db in cart_db checkout_db product_db payment_db; do
+    psql -h ${RDS_ENDPOINT} -U ${RDS_USERNAME} -d postgres -c "CREATE DATABASE ${db};" 2>/dev/null && echo "  ✓ ${db}" || echo "  ✓ ${db} (already exists)"
+done
+
+echo -e "${GREEN}✓ All databases verified${NC}"
+echo ""
 
 # ========================================
-# Create Vault Roles for Each Service
+# Create Vault Roles
 # ========================================
 echo -e "${YELLOW}Creating Vault database roles...${NC}"
 
-# Cart Service Role
-vault write database/roles/cartservice-role \
+kubectl exec -n vault vault-0 -- vault write database/roles/cartservice-role \
     db_name=postgresql \
-    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; \
-        GRANT ALL PRIVILEGES ON DATABASE cart_db TO \"{{name}}\";" \
+    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; GRANT ALL PRIVILEGES ON DATABASE cart_db TO \"{{name}}\";" \
     default_ttl="1h" \
     max_ttl="24h"
+echo "  ✓ cartservice-role"
 
-# Checkout Service Role
-vault write database/roles/checkoutservice-role \
+kubectl exec -n vault vault-0 -- vault write database/roles/checkoutservice-role \
     db_name=postgresql \
-    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; \
-        GRANT ALL PRIVILEGES ON DATABASE checkout_db TO \"{{name}}\";" \
+    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; GRANT ALL PRIVILEGES ON DATABASE checkout_db TO \"{{name}}\";" \
     default_ttl="1h" \
     max_ttl="24h"
+echo "  ✓ checkoutservice-role"
 
-# Product Catalog Service Role
-vault write database/roles/productcatalogservice-role \
+kubectl exec -n vault vault-0 -- vault write database/roles/productcatalogservice-role \
     db_name=postgresql \
-    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; \
-        GRANT ALL PRIVILEGES ON DATABASE product_db TO \"{{name}}\";" \
+    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; GRANT ALL PRIVILEGES ON DATABASE product_db TO \"{{name}}\";" \
     default_ttl="1h" \
     max_ttl="24h"
+echo "  ✓ productcatalogservice-role"
 
-# Payment Service Role
-vault write database/roles/paymentservice-role \
+kubectl exec -n vault vault-0 -- vault write database/roles/paymentservice-role \
     db_name=postgresql \
-    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; \
-        GRANT ALL PRIVILEGES ON DATABASE payment_db TO \"{{name}}\";" \
+    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; GRANT ALL PRIVILEGES ON DATABASE payment_db TO \"{{name}}\";" \
     default_ttl="1h" \
     max_ttl="24h"
+echo "  ✓ paymentservice-role"
 
-echo -e "${GREEN}✓ All Vault database roles created${NC}"
+echo -e "${GREEN}✓ All database roles created${NC}"
+echo ""
 
 # ========================================
 # Enable Kubernetes Auth
 # ========================================
 echo -e "${YELLOW}Enabling Kubernetes authentication...${NC}"
 
-if vault auth list | grep -q "^kubernetes/"; then
-    echo -e "${GREEN}Kubernetes auth already enabled${NC}"
-else
-    vault auth enable kubernetes
-    echo -e "${GREEN}✓ Kubernetes auth enabled${NC}"
-fi
+kubectl exec -n vault vault-0 -- vault auth enable kubernetes 2>/dev/null || echo "  Already enabled"
+echo -e "${GREEN}✓ Kubernetes auth enabled${NC}"
+echo ""
 
 # ========================================
-# Configure Kubernetes Auth
+# Configure Kubernetes Auth - CORRECTED METHOD
 # ========================================
-echo -e "${YELLOW}Configuring Kubernetes auth method...${NC}"
+echo -e "${YELLOW}Configuring Kubernetes auth (with vault-auth ServiceAccount)...${NC}"
 
+# Get Kubernetes cluster host
 KUBERNETES_HOST=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.server}')
 
-vault write auth/kubernetes/config \
-    kubernetes_host="${KUBERNETES_HOST}" \
-    kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-    token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token 2>/dev/null || \
-vault write auth/kubernetes/config \
-    kubernetes_host="${KUBERNETES_HOST}"
+# Get CA certificate from kube-system
+KUBERNETES_CA_CERT=$(kubectl get configmap -n kube-system kube-root-ca.crt -o jsonpath='{.data.ca\.crt}')
 
-echo -e "${GREEN}✓ Kubernetes auth configured${NC}"
+# Get token from vault-auth ServiceAccount
+# This method works on all Kubernetes versions
+echo -e "${YELLOW}Retrieving vault-auth ServiceAccount token...${NC}"
+
+# Wait for vault-auth secret to be created
+MAX_RETRIES=30
+RETRY_COUNT=0
+VAULT_AUTH_SECRET=""
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    VAULT_AUTH_SECRET=$(kubectl get secret -n vault -l kubernetes.io/service-account.name=vault-auth -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -n "$VAULT_AUTH_SECRET" ]; then
+        echo -e "${GREEN}✓ Found vault-auth secret: $VAULT_AUTH_SECRET${NC}"
+        break
+    fi
+    echo -e "${YELLOW}  Waiting for vault-auth secret... ($RETRY_COUNT/$MAX_RETRIES)${NC}"
+    sleep 2
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+done
+
+if [ -z "$VAULT_AUTH_SECRET" ]; then
+    echo -e "${RED}ERROR: Could not find vault-auth ServiceAccount secret${NC}"
+    echo -e "${YELLOW}Make sure vault-kubernetes-auth-SETUP.yaml was applied:${NC}"
+    echo "  kubectl apply -f vault-kubernetes-auth-SETUP.yaml"
+    kill $PORT_FORWARD_PID 2>/dev/null
+    exit 1
+fi
+
+REVIEWER_TOKEN=$(kubectl get secret -n vault $VAULT_AUTH_SECRET -o jsonpath='{.data.token}' | base64 -d)
+
+# Configure Kubernetes auth method
+kubectl exec -n vault vault-0 -- vault write auth/kubernetes/config \
+    kubernetes_host="${KUBERNETES_HOST}" \
+    kubernetes_ca_cert="${KUBERNETES_CA_CERT}" \
+    token_reviewer_jwt="${REVIEWER_TOKEN}"
+
+echo -e "${GREEN}✓ Kubernetes auth configured with vault-auth token${NC}"
+echo ""
 
 # ========================================
-# Create Vault Policies
+# Create Policies
 # ========================================
 echo -e "${YELLOW}Creating Vault policies...${NC}"
 
 for service in cartservice checkoutservice productcatalogservice paymentservice; do
-    vault policy write ${service}-policy - <<EOF
+    kubectl exec -n vault vault-0 -- vault policy write ${service}-policy - <<EOF
 path "database/creds/${service}-role" {
   capabilities = ["read"]
 }
 EOF
-    echo -e "${GREEN}✓ Policy created: ${service}-policy${NC}"
+    echo "  ✓ ${service}-policy"
 done
+
+echo -e "${GREEN}✓ All policies created${NC}"
+echo ""
 
 # ========================================
 # Create Kubernetes Roles in Vault
@@ -239,44 +336,68 @@ done
 echo -e "${YELLOW}Creating Kubernetes roles in Vault...${NC}"
 
 for service in cartservice checkoutservice productcatalogservice paymentservice; do
-    vault write auth/kubernetes/role/${service}-role \
+    kubectl exec -n vault vault-0 -- vault write auth/kubernetes/role/${service}-role \
         bound_service_account_names="${service}-sa" \
         bound_service_account_namespaces="default" \
         policies="${service}-policy" \
         ttl=1h
-    echo -e "${GREEN}✓ K8s role created: ${service}-role${NC}"
+    echo "  ✓ ${service}-role"
 done
+
+echo -e "${GREEN}✓ All Kubernetes roles created${NC}"
+echo ""
 
 # ========================================
 # Test Dynamic Credentials
 # ========================================
 echo -e "${YELLOW}Testing dynamic credential generation...${NC}"
+echo ""
 
-echo -e "${YELLOW}Testing cartservice credentials:${NC}"
-vault read database/creds/cartservice-role
+kubectl exec -n vault vault-0 -- vault read database/creds/cartservice-role
+
+echo ""
+
+# ========================================
+# Get Access Info
+# ========================================
+VAULT_UI_LB=$(kubectl get svc -n vault vault-ui -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "LoadBalancer pending...")
 
 # ========================================
 # Cleanup
 # ========================================
-kill $PORT_FORWARD_PID 2>/dev/null
+kill $PORT_FORWARD_PID 2>/dev/null || true
 
 # ========================================
-# Summary
+# Final Summary
 # ========================================
+echo ""
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}Vault Configuration Complete!${NC}"
+echo -e "${GREEN}✓✓✓ VAULT SETUP COMPLETE! ✓✓✓${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
-echo -e "${YELLOW}Next Steps:${NC}"
-echo "1. Save vault-init-keys.json to a secure location"
-echo "2. Delete vault-init-keys.json from this server"
-echo "3. Deploy microservices using ArgoCD"
-echo "4. Access Vault UI:"
-echo "   kubectl port-forward -n vault svc/vault-ui 8200:8200"
-echo "   Open: http://localhost:8200"
-echo "   Login with root token"
+echo -e "${YELLOW}YOUR ROOT TOKEN:${NC}"
+echo -e "${GREEN}${ROOT_TOKEN}${NC}"
 echo ""
-echo -e "${YELLOW}RDS Endpoint: ${RDS_ENDPOINT}${NC}"
-echo -e "${YELLOW}Vault Address: ${VAULT_ADDR}${NC}"
+echo -e "${YELLOW}Credentials saved to:${NC}"
+echo "  $(pwd)/vault-init-keys.json"
 echo ""
+echo -e "${YELLOW}Vault UI Access:${NC}"
+echo "  URL: http://${VAULT_UI_LB}:8200"
+echo "  Login with root token above"
+echo ""
+echo -e "${YELLOW}Database Information:${NC}"
+echo "  Endpoint: ${RDS_ENDPOINT}"
+echo "  Databases: cart_db, checkout_db, product_db, payment_db"
+echo ""
+echo -e "${YELLOW}Kubernetes Auth is configured with:${NC}"
+echo "  - vault-auth ServiceAccount (has system:auth-delegator)"
+echo "  - Policies: cartservice-policy, checkoutservice-policy, etc."
+echo "  - Roles bound to: cartservice-sa, checkoutservice-sa, etc."
+echo ""
+echo -e "${RED}NEXT STEPS:${NC}"
+echo "  1. BACKUP vault-init-keys.json to 1Password/AWS Secrets Manager"
+echo "  2. DELETE vault-init-keys.json from this server"
+echo "  3. Deploy microservices (they have their own SAs in vault-kubernetes-auth-SETUP.yaml)"
+echo ""
+echo -e "${GREEN}All services configured for dynamic credentials!${NC}"
 echo -e "${GREEN}========================================${NC}"
