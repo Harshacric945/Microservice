@@ -28,7 +28,7 @@ server:
   dataStorage:
     enabled: true
     size: 10Gi
-    storageClass: gp3
+    storageClass: gp2
     accessMode: ReadWriteOnce
 
   service:

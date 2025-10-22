@@ -48,7 +48,7 @@ module "vpc" {
   database_subnets = var.database_subnet_cidrs
 
   enable_nat_gateway   = true
-  single_nat_gateway   = false
+  single_nat_gateway   = true
   enable_dns_hostnames = true
   enable_dns_support   = true
 
@@ -231,8 +231,9 @@ resource "aws_security_group" "rds" {
 }
 
 resource "random_password" "rds_password" {
-  length  = 32
-  special = true
+  length           = 32
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"  # Exclude /, @, ", and space
 }
 
 resource "aws_db_instance" "postgresql" {
