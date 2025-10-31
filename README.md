@@ -424,3 +424,30 @@ cd scripts/demo_scenarios.md
 For Argo rollouts and canary deployment full guide refer
 
 [Open canarydeploymentargorollouts.md](argorollouts/canarydeploymentargorollouts.md)
+
+
+Testing & Validation (30 minutes)
+
+Step 1: Access Application
+```
+ # Get frontend LoadBalancer URL 
+kubectl get svc frontend-external
+
+# Open in browser 
+# You should see  the e-commerce site!
+```
+Step 2: Test Database Persistence
+```
+# Add items to cart 
+# Refresh page - items should persist 
+# Check database
+RDS_ENDPOINT=$(terraform output -raw rds_endpoint | cut -d':' -f1)
+RDS_PASSWORD=$(terraform output -raw rds_password)
+PGPASSWORD=$RDS_PASSWORD psql -h $RDS_ENDPOINT -U vaultadmin -d cart_db -c "SELECT * FROM
+cart_item
+```
+Step 3: Test Vault Dynamic Credentials
+```
+#  Watch credentials rotate
+kubectl logs -f cartservice-xxx -c vault-agent
+# Should see new credentials every hour
