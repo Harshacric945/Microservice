@@ -1,5 +1,6 @@
 # ========================================
-# FILE: main.tf (FULLY CORRECTED)
+# FILE: main.tf (MANUAL VAULT VERSION)
+# Comment out KMS sections for manual Shamir unsealing
 # ========================================
 
 terraform {
@@ -25,16 +26,10 @@ terraform {
   }
 }
 
-# ========================================
-# AWS Provider
-# ========================================
 provider "aws" {
   region = var.aws_region
 }
 
-# ========================================
-# VPC Module
-# ========================================
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
@@ -65,9 +60,6 @@ module "vpc" {
   tags = var.tags
 }
 
-# ========================================
-# EKS Module (with IRSA)
-# ========================================
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.8"
@@ -113,9 +105,6 @@ module "eks" {
   tags = var.tags
 }
 
-# ========================================
-# EBS CSI Driver IRSA
-# ========================================
 module "ebs_csi_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
   version = "~> 5.0"
@@ -134,9 +123,6 @@ module "ebs_csi_irsa" {
   tags = var.tags
 }
 
-# ========================================
-# EBS CSI Driver Addon
-# ========================================
 resource "aws_eks_addon" "ebs_csi_driver" {
   cluster_name             = module.eks.cluster_name
   addon_name               = "aws-ebs-csi-driver"
@@ -149,9 +135,6 @@ resource "aws_eks_addon" "ebs_csi_driver" {
   ]
 }
 
-# ========================================
-# EKS Cluster Data Sources (AFTER creation)
-# ========================================
 data "aws_eks_cluster" "cluster" {
   name       = module.eks.cluster_name
   depends_on = [module.eks]
@@ -162,9 +145,6 @@ data "aws_eks_cluster_auth" "cluster" {
   depends_on = [module.eks]
 }
 
-# ========================================
-# Providers for Kubernetes & Helm (Alias)
-# ========================================
 provider "kubernetes" {
   alias                  = "eks"
   host                   = data.aws_eks_cluster.cluster.endpoint
@@ -182,22 +162,22 @@ provider "helm" {
 }
 
 # ========================================
-# KMS Key for Vault Auto-Unseal (CORRECTED)
+# COMMENTED OUT: KMS Key for Vault
+# Uncomment ONLY if you want KMS auto-unseal
 # ========================================
-resource "aws_kms_key" "vault_unseal" {
-  description             = "KMS key for Vault auto-unseal"
-  deletion_window_in_days = 10
-  enable_key_rotation     = true
+# resource "aws_kms_key" "vault_unseal" {
+#   description             = "KMS key for Vault auto-unseal"
+#   deletion_window_in_days = 10
+#   enable_key_rotation     = true
+#   tags = merge(var.tags, {
+#     Name = "${var.cluster_name}-vault-unseal-key"
+#   })
+# }
 
-  tags = merge(var.tags, {
-    Name = "${var.cluster_name}-vault-unseal-key"
-  })
-}
-
-resource "aws_kms_alias" "vault_unseal" {
-  name          = "alias/${var.cluster_name}-vault-unseal"
-  target_key_id = aws_kms_key.vault_unseal.key_id
-}
+# resource "aws_kms_alias" "vault_unseal" {
+#   name          = "alias/${var.cluster_name}-vault-unseal"
+#   target_key_id = aws_kms_key.vault_unseal.key_id
+# }
 
 # ========================================
 # RDS PostgreSQL Instance
@@ -233,7 +213,7 @@ resource "aws_security_group" "rds" {
 resource "random_password" "rds_password" {
   length           = 32
   special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"  # Exclude /, @, ", and space
+  override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
 resource "aws_db_instance" "postgresql" {
@@ -260,93 +240,91 @@ resource "aws_db_instance" "postgresql" {
 }
 
 # ========================================
-# IRSA for Vault (KMS Access) - CORRECTED POLICY
+# COMMENTED OUT: IRSA for Vault KMS
+# Uncomment ONLY if using KMS auto-unseal
 # ========================================
-module "vault_irsa" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.0"
+# module "vault_irsa" {
+#   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+#   version = "~> 5.0"
+#
+#   role_name = "${var.cluster_name}-vault-kms-unseal"
+#
+#   role_policy_arns = {
+#     kms = aws_iam_policy.vault_kms_unseal.arn
+#   }
+#
+#   oidc_providers = {
+#     main = {
+#       provider_arn               = module.eks.oidc_provider_arn
+#       namespace_service_accounts = ["vault:vault"]
+#     }
+#   }
+#
+#   tags = var.tags
+# }
 
-  role_name = "${var.cluster_name}-vault-kms-unseal"
-
-  role_policy_arns = {
-    kms = aws_iam_policy.vault_kms_unseal.arn
-  }
-
-  oidc_providers = {
-    main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["vault:vault"]
-    }
-  }
-
-  tags = var.tags
-}
-
-# FULLY CORRECTED KMS Policy
-resource "aws_iam_policy" "vault_kms_unseal" {
-  name        = "${var.cluster_name}-vault-kms-unseal-policy"
-  description = "Policy for Vault to use KMS for auto-unseal"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "kms:Decrypt",
-          "kms:Encrypt",
-          "kms:DescribeKey",
-          "kms:GenerateDataKey"
-        ]
-        Resource = aws_kms_key.vault_unseal.arn
-      }
-    ]
-  })
-
-  tags = var.tags
-}
-
-# ========================================
-# Kubernetes Namespace + SA for Vault
-# ========================================
-resource "kubernetes_namespace" "vault" {
-  provider = kubernetes.eks
-  metadata { name = "vault" }
-  depends_on = [module.eks]
-}
-
-resource "kubernetes_service_account" "vault" {
-  provider = kubernetes.eks
-  metadata {
-    name      = "vault"
-    namespace = "vault"
-    annotations = {
-      "eks.amazonaws.com/role-arn" = module.vault_irsa.iam_role_arn
-    }
-  }
-  depends_on = [kubernetes_namespace.vault]
-}
+# resource "aws_iam_policy" "vault_kms_unseal" {
+#   name        = "${var.cluster_name}-vault-kms-unseal-policy"
+#   description = "Policy for Vault to use KMS for auto-unseal"
+#
+#   policy = jsonencode({
+#     Version = "2012-10-17"
+#     Statement = [
+#       {
+#         Effect = "Allow"
+#         Action = [
+#           "kms:Decrypt",
+#           "kms:Encrypt",
+#           "kms:DescribeKey",
+#           "kms:GenerateDataKey"
+#         ]
+#         Resource = aws_kms_key.vault_unseal.arn
+#       }
+#     ]
+#   })
+#
+#   tags = var.tags
+# }
 
 # ========================================
-# Helm Release - HashiCorp Vault
+# COMMENTED OUT: Vault Helm via Terraform
+# Install Vault manually with Helm instead
 # ========================================
-resource "helm_release" "vault" {
-  provider   = helm.eks
-  name       = "vault"
-  repository = "https://helm.releases.hashicorp.com"
-  chart      = "vault"
-  version    = "0.27.0"
-  namespace  = kubernetes_namespace.vault.metadata[0].name
+# resource "kubernetes_namespace" "vault" {
+#   provider = kubernetes.eks
+#   metadata { name = "vault" }
+#   depends_on = [module.eks]
+# }
 
-  values = [templatefile("${path.module}/vault-values.yaml", {
-    kms_key_id           = aws_kms_key.vault_unseal.arn
-    aws_region           = var.aws_region
-    service_account_name = kubernetes_service_account.vault.metadata[0].name
-  })]
+# resource "kubernetes_service_account" "vault" {
+#   provider = kubernetes.eks
+#   metadata {
+#     name      = "vault"
+#     namespace = "vault"
+#     annotations = {
+#       "eks.amazonaws.com/role-arn" = module.vault_irsa.iam_role_arn
+#     }
+#   }
+#   depends_on = [kubernetes_namespace.vault]
+# }
 
-  depends_on = [
-    module.eks,
-    kubernetes_namespace.vault,
-    kubernetes_service_account.vault
-  ]
-}
+# resource "helm_release" "vault" {
+#   provider   = helm.eks
+#   name       = "vault"
+#   repository = "https://helm.releases.hashicorp.com"
+#   chart      = "vault"
+#   version    = "0.27.0"
+#   namespace  = kubernetes_namespace.vault.metadata[0].name
+#
+#   values = [templatefile("${path.module}/vault-values.yaml", {
+#     kms_key_id           = aws_kms_key.vault_unseal.arn
+#     aws_region           = var.aws_region
+#     service_account_name = kubernetes_service_account.vault.metadata[0].name
+#   })]
+#
+#   depends_on = [
+#     module.eks,
+#     kubernetes_namespace.vault,
+#     kubernetes_service_account.vault
+#   ]
+# }
