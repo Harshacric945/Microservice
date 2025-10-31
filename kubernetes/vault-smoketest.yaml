@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vault-smoketest
+  namespace: default
+spec:
+  serviceAccountName: cartservice-sa
+  containers:
+  - name: curl
+    image: curlimages/curl:8.5.0
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        echo "Fetching JWT from pod's SA..."
+        JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+        echo "Logging into Vault with Kubernetes Auth..."
+        LOGIN=$(curl -s --request POST \
+          --data "{\"jwt\":\"$JWT\",\"role\":\"cartservice-role\"}" \
+          http://vault.vault:8200/v1/auth/kubernetes/login)
+
+        CLIENT_TOKEN=$(echo $LOGIN | jq -r '.auth.client_token')
+
+        echo "Using Vault token to fetch dynamic DB creds..."
+        curl -s \
+          --header "X-Vault-Token: $CLIENT_TOKEN" \
+          http://vault.vault:8200/v1/database/creds/cartservice-role
+    volumeMounts:
+    - name: sa-token
+      mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      readOnly: true
+  restartPolicy: Never
+  volumes:
+  - name: sa-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          path: token
+          expirationSeconds: 600
