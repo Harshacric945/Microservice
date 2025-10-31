@@ -44,15 +44,18 @@ output "rds_password" {
   sensitive   = true
 }
 
-output "kms_key_id" {
-  description = "KMS Key ID for Vault"
-  value       = aws_kms_key.vault_unseal.id
-}
+# ========================================
+# COMMENT OUT: KMS outputs (resource doesn't exist)
+# ========================================
+# output "kms_key_id" {
+#   description = "KMS Key ID for Vault"
+#   value       = aws_kms_key.vault_unseal.id
+# }
 
-output "vault_irsa_role_arn" {
-  description = "IAM Role ARN for Vault IRSA"
-  value       = module.vault_irsa.iam_role_arn
-}
+# output "vault_irsa_role_arn" {
+#   description = "IAM Role ARN for Vault IRSA"
+#   value       = module.vault_irsa.iam_role_arn
+# }
 
 output "kubeconfig_command" {
   description = "Command to update kubeconfig"
