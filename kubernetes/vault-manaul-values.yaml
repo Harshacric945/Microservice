@@ -1,0 +1,108 @@
+# Vault Helm Values - Manual Shamir Unsealing
+# This removes ALL AWS KMS dependencies
+
+global:
+  enabled: true
+  tlsDisable: true  # Simplify for now, enable later
+
+injector:
+  enabled: true
+  replicas: 1
+
+server:
+  # Use standalone mode initially to avoid HA complexity
+  standalone:
+    enabled: false
+  
+  # HA mode with Raft storage
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      
+      config: |
+        ui = true
+        
+        listener "tcp" {
+          tls_disable = 1
+          address = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+        
+        storage "raft" {
+          path = "/vault/data"
+          
+          retry_join {
+            leader_api_addr = "http://vault-0.vault-internal:8200"
+          }
+          
+          retry_join {
+            leader_api_addr = "http://vault-1.vault-internal:8200"
+          }
+          
+          retry_join {
+            leader_api_addr = "http://vault-2.vault-internal:8200"
+          }
+        }
+        
+        # NO AWS KMS SEAL - Manual Shamir only
+        service_registration "kubernetes" {}
+  
+  # Critical: Increase probe timings for Windows/slow environments
+  readinessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+  
+  livenessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true"
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+  
+  # Resource limits
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+  
+  # Data directory
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    storageClass: "gp2"  # EKS default
+    accessMode: ReadWriteOnce
+  
+  # Audit storage
+  auditStorage:
+    enabled: true
+    size: 5Gi
+    storageClass: "gp2"
+    accessMode: ReadWriteOnce
+  
+  # Service configuration
+  service:
+    enabled: true
+    type: LoadBalancer
+    port: 8200
+    targetPort: 8200
+  
+  # Annotations for AWS Load Balancer
+  serviceAccount:
+    create: true
+    name: "vault"
+    # Remove all AWS IRSA annotations
+
+ui:
+  enabled: true
+  serviceType: "LoadBalancer"
