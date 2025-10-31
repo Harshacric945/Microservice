@@ -297,7 +297,8 @@ Verify in UI
 4. Go to Infrastructure → Host Map
 5. You'll see all nodes with metrics
 For more information and  detailed setup of dashbaords , monitoring tools access cd scripts/complete_workflow.md
-[Open complete_workflow.md](https://github.com/Harshacric945/Microservice/scripts/complete_workflow.md)
+
+[Open complete_workflow.md](scripts/complete_workflow.md)
 
 
 Test Vault Integration
@@ -415,5 +416,7 @@ where: state:waiting, reason:CrashLoopBackOf where: state:waiting, reason:CrashL
 Alert: > 0
 
 *** Refer the demo scenarios for actual real time testing of the full microservices application ***
+
 cd scripts/demo_scenarios.md
-[Open demo_scenarios.md](https://github.com/Harshacric945/Microservice/scripts/demo_scenarios.md)
+
+[Open demo_scenarios.md](scripts/demo_scenarios.md)
