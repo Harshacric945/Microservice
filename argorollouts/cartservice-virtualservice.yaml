@@ -1,0 +1,20 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: cartservice-vsvc
+spec:
+  hosts:
+  - cartservice
+  http:
+  - name: primary
+    route:
+    - destination:
+        host: cartservice
+        port:
+          number: 7070
+      weight: 100  # Argo Rollouts will modify this
+    - destination:
+        host: cartservice-canary
+        port:
+          number: 7070
+      weight: 0    # Argo Rollouts will modify this
