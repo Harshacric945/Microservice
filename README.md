@@ -420,3 +420,7 @@ Alert: > 0
 cd scripts/demo_scenarios.md
 
 [Open demo_scenarios.md](scripts/demo_scenarios.md)
+
+For Argo rollouts and canary deployment full guide refer
+
+[Open canarydeploymentargorollouts.md](argorollouts/cartservice_argorollouts.yaml)
