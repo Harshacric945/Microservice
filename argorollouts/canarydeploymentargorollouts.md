@@ -18,6 +18,8 @@ OR
 Directly remove from the github and before that copy and save that somewhere else safely after testing normal deployment with ARGOCD
 
 # 2. Update GitOps Repo Structure:
+
+```
 k8s-manifests/
 ├── cartservice-rollout.yaml          # Use Rollout instead of Deployment
 ├── cartservice-virtualservice.yaml   # Add VirtualService
@@ -25,6 +27,7 @@ k8s-manifests/
 ├── productcatalogservice.yaml        # Keep as Deployment
 ├── paymentservice.yaml               # Keep as Deployment
 └── ... (other services)
+```
 
 # 3. ArgoCD Application (NO CHANGES NEEDED)
 #    - ArgoCD supports Rollouts natively
