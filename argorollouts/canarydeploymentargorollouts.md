@@ -66,7 +66,7 @@ kubectl argo rollouts set image cartservice server=harshakoppu945/cartservice:v2
 # Watch the rollout progress:
 ```
 kubectl argo rollouts get rollout cartservice --watch
-```
+
 # You'll see:
 # ├──# revision:2
 # │  ├──⧉ cartservice-v2-abc123 (canary)
@@ -77,6 +77,7 @@ kubectl argo rollouts get rollout cartservice --watch
 #       ├──□ cartservice-v1-xyz789-1 (Running) - 90% traffic
 #       ├──□ cartservice-v1-xyz789-2 (Running)
 #       └──□ cartservice-v1-xyz789-3 (Running)
+```
 
 # Step 5: Monitor canary
 # Check Kiali dashboard to see traffic split
