@@ -97,6 +97,8 @@ helm install vault hashicorp/vault \
   -f vault-manual-values.yaml \
   -n vault
 
+#Run the helm install cmd where the vault-manaul-values.yaml file is present 
+
 # Wait for pods (they'll be 0/1 - this is normal)
 kubectl get pods -n vault -w
 ```
@@ -288,6 +290,16 @@ kubectl port-forward -n argo-rollouts svc/argo-rollouts-dashboard 3100:3100
 # 7. Datadog
 # Access: https://app.datadoghq.com
 ```
+Verify in UI
+1. Wait 2-3 minutes for data to flow
+2. Go to Datadog UI → Infrastructure → Kubernetes
+3. You should see your cluster!
+4. Go to Infrastructure → Host Map
+5. You'll see all nodes with metrics
+For more information and  detailed setup of dashbaords , monitoring tools access cd scripts/complete_workflow.md
+[Open complete_workflow.md](https://github.com/Harshacric945/Microservice/scripts/complete_workflow.md)
+
+
 Test Vault Integration
 ```
 export VAULT_TOKEN=$(cat vault-init-keys.json | jq -r '.root_token')
@@ -367,3 +379,41 @@ terraform output worker_security_group_id
 # Port: 5432
 # Source: <worker-sg-id>
 ```
+Configure Slack Integration
+1. Go to Datadog UI → Integrations
+2. Search "Slack" → Configure
+3. Authorize Slack workspace
+4. Select channel: #devops-alerts
+
+Create Monitors
+
+CPU Monitor:
+Monitors → New Monitor → Metric
+Metric: kubernetes.cpu.usage
+by: pod_name, kube_namespace
+Alert: avg(last_5m) > 70
+Warning: avg(last_5m) > 50
+Notify: @slack-devops-alerts
+Message:
+{{#is_alert}}
+🚨 High CPU on {{pod_name.name}}
+CPU: {{value}}%
+Namespace: {{kube_namespace.name}}
+{{/is_alert}}
+
+Memory Monitor:
+Metric: kubernetes.memory.rss or kubernetes.memory.usage
+Alert: > 80% of limit
+Warning: > 60% 
+
+Pod CrashLoopBackOff:
+Metric: kubernetes.pods.crashed
+Alert: > 0
+OR
+Metric: kubernetes.pods.state_code
+where: state:waiting, reason:CrashLoopBackOf where: state:waiting, reason:CrashLoopBackOfff
+Alert: > 0
+
+*** Refer the demo scenarios for actual real time testing of the full microservices application ***
+cd scripts/demo_scenarios.md
+[Open demo_scenarios.md](https://github.com/Harshacric945/Microservice/scripts/demo_scenarios.md)
