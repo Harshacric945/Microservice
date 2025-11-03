@@ -24,7 +24,7 @@ spec:
         vault.hashicorp.com/agent-inject-secret-db-creds: "database/creds/paymentservice-role"
         vault.hashicorp.com/agent-inject-template-db-creds: |
           {{- with secret "database/creds/paymentservice-role" -}}
-          export DB_HOST="REPLACE_WITH_YOUR_RDS_ENDPOINT"
+          export DB_HOST="micro-eks-postgresql.cjewwg2cazii.ap-south-1.rds.amazonaws.com:5432"
           export DB_PORT="5432"
           export DB_NAME="payment_db"
           export DB_USER="{{ .Data.username }}"
