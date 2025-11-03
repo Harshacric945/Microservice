@@ -180,13 +180,21 @@ datadog:
     portEnabled: true
   processAgent:
     enabled: true
+  networkMonitoring:
+    enabled: true
   systemProbe:
+    enableTCPQueueLength: true
+    enableOOMKill: true
+
+securityAgent:
+  runtime:
     enabled: true
 
 clusterAgent:
   enabled: true
   replicas: 2
   createPodDisruptionBudget: true
+
 EOF
     
     # Install Datadog
