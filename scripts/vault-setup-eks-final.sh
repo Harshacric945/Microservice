@@ -217,20 +217,16 @@ kubectl exec -n vault vault-0 -- env VAULT_TOKEN=${VAULT_TOKEN} vault write data
 
 echo -e "${GREEN}✓ Database engine configured${NC}"
 
-# ========================================
-# Create Databases (if psql available)
-# ========================================
-if command -v psql >/dev/null; then
-    echo -e "${YELLOW}Step 8: Creating databases...${NC}"
-    export PGPASSWORD="${RDS_PASSWORD}"
-    
-    for db in cart_db checkout_db product_db payment_db; do
-        psql -h "${RDS_ENDPOINT}" -U "${RDS_USERNAME}" -d postgres -c "CREATE DATABASE ${db};" 2>/dev/null \
-            && echo "  ✓ ${db}" || echo "  ✓ ${db} (already exists)"
-    done
-else
-    echo -e "${YELLOW}Step 8: Skipping DB creation (psql not installed)${NC}"
-fi
+# Create databases using kubectl exec (works from anywhere)
+echo -e "${YELLOW}Step 8: Creating databases via Kubernetes...${NC}"
+
+kubectl run db-creator --rm -i --image=postgres:15 --restart=Never -- bash -c "
+export PGPASSWORD='${RDS_PASSWORD}'
+for db in cart_db checkout_db product_db payment_db; do
+    psql -h ${RDS_ENDPOINT} -U ${RDS_USERNAME} -d postgres --set=sslmode=require \
+        -c \"CREATE DATABASE \${db};\" 2>/dev/null && echo \"  ✓ \${db}\" || echo \"  ✓ \${db} (exists)\"
+done
+" 2>/dev/null || echo -e "${YELLOW}⚠ Database creation failed - check manually${NC}"
 
 # ========================================
 # Vault Database Roles
