@@ -6,11 +6,14 @@ metadata:
 spec:
   serviceAccountName: cartservice-sa
   containers:
-  - name: curl
-    image: curlimages/curl:8.5.0
+  - name: test
+    image: alpine:3.19  # Changed from curlimages/curl
     command: ["/bin/sh", "-c"]
     args:
       - |
+        # Install dependencies
+        apk add --no-cache curl jq
+        
         echo "Fetching JWT from pod's SA..."
         JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
 
@@ -20,11 +23,30 @@ spec:
           http://vault.vault:8200/v1/auth/kubernetes/login)
 
         CLIENT_TOKEN=$(echo $LOGIN | jq -r '.auth.client_token')
+        
+        if [ "$CLIENT_TOKEN" = "null" ] || [ -z "$CLIENT_TOKEN" ]; then
+          echo "ERROR: Failed to get Vault token"
+          echo "Response: $LOGIN"
+          exit 1
+        fi
 
+        echo "✓ Successfully authenticated with Vault"
         echo "Using Vault token to fetch dynamic DB creds..."
-        curl -s \
+        
+        CREDS=$(curl -s \
           --header "X-Vault-Token: $CLIENT_TOKEN" \
-          http://vault.vault:8200/v1/database/creds/cartservice-role
+          http://vault.vault:8200/v1/database/creds/cartservice-role)
+        
+        echo "$CREDS" | jq .
+        
+        USERNAME=$(echo $CREDS | jq -r '.data.username')
+        if [ "$USERNAME" != "null" ]; then
+          echo "✓ Successfully generated dynamic credentials!"
+          echo "Username: $USERNAME"
+        else
+          echo "ERROR: Failed to generate credentials"
+          exit 1
+        fi
     volumeMounts:
     - name: sa-token
       mountPath: /var/run/secrets/kubernetes.io/serviceaccount
