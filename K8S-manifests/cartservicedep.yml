@@ -24,7 +24,7 @@ spec:
         vault.hashicorp.com/agent-inject-secret-db-creds: "database/creds/cartservice-role"
         vault.hashicorp.com/agent-inject-template-db-creds: |
           {{- with secret "database/creds/cartservice-role" -}}
-          export DB_HOST="micro-eks-postgresql.cjewwg2cazii.ap-south-1.rds.amazonaws.com:5432"
+          export DB_HOST="micro-eks-postgresql.cjewwg2cazii.ap-south-1.rds.amazonaws.com"
           export DB_PORT="5432"
           export DB_NAME="cart_db"
           export DB_USER="{{ .Data.username }}"
@@ -43,10 +43,29 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
           - |
+            # Wait up to 15 seconds for vault secrets
             for i in $(seq 1 15); do
               [ -s /vault/secrets/db-creds ] && break || sleep 1
             done
+            
+            # Check if file exists and is readable
+            if [ ! -f /vault/secrets/db-creds ]; then
+              echo "ERROR: Vault secrets file not found at /vault/secrets/db-creds"
+              exit 1
+            fi
+            
+            # Source the credentials
             source /vault/secrets/db-creds
+            
+            # Verify required variables are set
+            if [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ]; then
+              echo "ERROR: DB credentials not properly loaded"
+              exit 1
+            fi
+            
+            echo "Successfully loaded DB credentials for user: $DB_USER"
+            
+            # Start the application
             exec /app/cartservice
         env:
         - name: PORT
