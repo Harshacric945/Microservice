@@ -210,6 +210,47 @@ resource "aws_security_group" "rds" {
   tags = merge(var.tags, { Name = "${var.cluster_name}-rds-sg" })
 }
 
+# ========================================
+# ADDED: Security Group Rules for EKS Access
+# ========================================
+
+# Allow EKS cluster security group to access RDS
+resource "aws_security_group_rule" "rds_from_eks_cluster" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds.id
+  source_security_group_id = module.eks.cluster_security_group_id
+  description              = "PostgreSQL from EKS cluster security group"
+}
+
+# Allow EKS node security group to access RDS
+resource "aws_security_group_rule" "rds_from_eks_nodes" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds.id
+  source_security_group_id = module.eks.node_security_group_id
+  description              = "PostgreSQL from EKS worker nodes"
+}
+
+# Optional: Allow your laptop IP for debugging (comment out in production)
+resource "aws_security_group_rule" "rds_from_admin" {
+  type              = "ingress"
+  from_port         = 5432
+  to_port           = 5432
+  protocol          = "tcp"
+  security_group_id = aws_security_group.rds.id
+  cidr_blocks       = ["49.43.230.208/32"]  # Update with your IP or remove in production
+  description       = "PostgreSQL from admin laptop (for debugging)"
+}
+
+# ========================================
+# Continue with existing resources...
+# ========================================
+
 resource "random_password" "rds_password" {
   length           = 32
   special          = true
